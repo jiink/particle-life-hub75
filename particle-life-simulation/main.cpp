@@ -1,15 +1,18 @@
 // TODO: Cell optimization https://youtu.be/9IULfQH7E90?t=231
+// Resources:
+// 		https://youtu.be/scvuli-zcRc
 
 #include <iostream>
 #include <raylib.h>
 #include <math.h>
 
-#define CANVAS_WIDTH (160) // Resolution of what you want to draw to
-#define CANVAS_HEIGHT (120)
+#define CANVAS_WIDTH (64 * 1) // Resolution of what you want to draw to
+#define CANVAS_HEIGHT (32 * 1)
+#define CANVAS_ASPECT_RATIO (CANVAS_WIDTH / CANVAS_HEIGHT)
 #define SCREEN_WIDTH (CANVAS_WIDTH * 4) // How big will it be on your screen?
 #define SCREEN_HEIGHT (CANVAS_HEIGHT * 4)
 
-#define MAX_PARTICLES 500
+#define MAX_PARTICLES 250
 #define MAX_COLOR_GROUPS 2
 
 using namespace std;
@@ -24,27 +27,32 @@ static void UpdateDrawFrame(void); // Update and draw one frame
 enum ColorGroup
 {
 	GROUP_RED,
-	GROUP_BLUE
+	GROUP_BLUE,
+	GROUP_YELLOW
 };
 
 const Color ColorGroupColors[] = {
 	{255, 20, 67, 255},
-	{20, 200, 255, 255}};
+	{20, 200, 255, 255},
+	{255, 200, 20, 255}};
 
-const float attractionFactorMatrix[MAX_COLOR_GROUPS][MAX_COLOR_GROUPS] = {
-	{1.0, -1.0},
-	{0.2, 0.0},
-};
+float attractionFactorMatrix[MAX_COLOR_GROUPS][MAX_COLOR_GROUPS];
 
 struct Particle
 {
 	Vector2 position;
 	Vector2 velocity;
 	ColorGroup colorGroup;
-	Color colorDraw;
 };
 
 Particle particles[MAX_PARTICLES];
+
+// In worldspace, the radius of the sphere of influence for each particle.
+const float maxDistance = 0.3;
+const float frictionHalfLife = 0.04;
+const float dt = 0.01;
+const float frictionFactor = pow(0.5, dt / frictionHalfLife);
+const float forceFactor = 5.0;
 
 //----------------------------------------------------------------------------------
 // Main entry point
@@ -133,7 +141,7 @@ float Vector2Length(Vector2 a)
 	return sqrt(a.x * a.x + a.y * a.y);
 }
 
-Vector2 Vector2Multiply(Vector2 a, float scalar)
+Vector2 Vector2Scale(Vector2 a, float scalar)
 {
 	return {a.x * scalar, a.y * scalar};
 }
@@ -197,39 +205,33 @@ void DrawPoint(Vector2 position, Color color)
 	DrawPixelV(pixelCornerBottomRight, colorBottomRight);
 }
 
-// Returns the attraction force that will be applied to the subject
-Vector2 GetAttractionForce(Particle pSubject, Particle pObject)
-{
-	// Get attraction factor from matrix
-	uint8_t column = (uint8_t)pSubject.colorGroup;
-	uint8_t row = (uint8_t)pObject.colorGroup;
-	float attractionFactor = attractionFactorMatrix[row][column];
 
-	Vector2 delta = Vector2Subtract(pSubject.position, pObject.position);
-	float distance = Vector2Length(delta);
-	const float tooCloseDistance = 7.0f;
-	const float tooCloseRepelFactor = 1.0f;
-	const float maxDistance = 15.0f + tooCloseDistance;
-	float forceMagnitude = 0.0;
-	// Repuslive force when nearby
+float AttractionForceMag(float distance, float attractionFactor)
+{
+	// Closer than this, and the particles will push each other away
+	const float tooCloseDistance = 0.1;
 	if (distance < tooCloseDistance)
 	{
-		forceMagnitude = (((tooCloseRepelFactor * distance) / tooCloseDistance) - tooCloseRepelFactor);
-		// if (forceMagnitude > 0.01)
-		// {
-		// 	printf("Excuse me!\n");
-		// }
+		// Get away from me!
+		return distance / tooCloseDistance - 1;
 	}
-	else if (distance < tooCloseDistance + maxDistance)
-	{ // Ramp up to characteristic value then back down
-		forceMagnitude = attractionFactor * (-abs((distance - 0.5 * maxDistance - tooCloseDistance) / (0.5 * maxDistance)) + 1.0);
-		// if (forceMagnitude > 0.01)
-		// {
-		// 	printf("Excuse me!\n");
-		// }
+	else if (tooCloseDistance < distance && distance < 1)
+	{
+		// Come closer
+		return attractionFactor * (1.0 - abs(2.0 * distance - 1 - tooCloseDistance) / (1 - tooCloseDistance));
 	}
+	else
+	{
+		return 0.0;
+	}
+}
 
-	return Vector2Multiply(Vector2Normalize(delta), -forceMagnitude);
+void randomizeAttractionFactorMatrix() {
+	for(int i = 0; i < MAX_COLOR_GROUPS; i++){
+		for(int j = 0; j < MAX_COLOR_GROUPS; j++){
+			attractionFactorMatrix[j][i] = RandFloat(-1.0, 1.0);
+		}
+	}
 }
 
 static void Initialize()
@@ -237,15 +239,17 @@ static void Initialize()
 	// Initialize the particles with random positions, velocities, and colors
 	for (int i = 0; i < MAX_PARTICLES; i++)
 	{
-		particles[i].position = {RandFloat(0, CANVAS_WIDTH), RandFloat(0, CANVAS_HEIGHT)};
+		particles[i].position = {RandFloat(0, CANVAS_ASPECT_RATIO), RandFloat(0, 1)};
 		// particles[i].velocity = { RandFloat(-50, 50), RandFloat(-50, 50) };
-		// particles[i].velocity = {RandFloat(-1, 1), RandFloat(-1, 1)};
-		particles[i].velocity = {0.0, 0.0};
+		//particles[i].velocity = {RandFloat(-1, 1), RandFloat(-1, 1)};
+		 particles[i].velocity = {0.0, 0.0};
 
 		particles[i].colorGroup = (ColorGroup)RandByte(GROUP_RED, MAX_COLOR_GROUPS - 1);
-		
-		particles[i].colorDraw = ColorGroupColors[particles[i].colorGroup];
+
+		// particles[i].colorDraw = ColorGroupColors[particles[i].colorGroup];
 	}
+
+	randomizeAttractionFactorMatrix();
 }
 
 static void UpdateDrawFrame()
@@ -258,60 +262,55 @@ static void UpdateDrawFrame()
 
 	ClearBackground(BLACK);
 
-	// Update and draw each particle
+	// Update each particle
 	for (int i = 0; i < MAX_PARTICLES; i++)
 	{
+		Vector2 totalForce = {0.0, 0.0}; // Will be accumulated when looping through neighbors
 		for (int j = 0; j < MAX_PARTICLES; j++)
 		{
-			if (i != j)
+			if (j == i)
+				continue;
+			// Only deal with neighbors within sphere of influence
+			Vector2 delta = Vector2Subtract(particles[i].position, particles[j].position);
+			float distance = Vector2Length(delta);
+			if (distance > 0.0 && distance < maxDistance)
 			{
-				Vector2 force = GetAttractionForce(particles[i], particles[j]);
-				particles[i].velocity = Vector2Add(particles[i].velocity, force);
+				// How hard do I need to move?
+				float forceMag = AttractionForceMag(distance / maxDistance, attractionFactorMatrix[particles[i].colorGroup][particles[j].colorGroup]);
+
+				// Where do I need to move?
+				// Normalize then scale by force magnitude
+				Vector2 force = Vector2Scale(delta, -1.0 / distance * forceMag);
+				totalForce = Vector2Add(totalForce, force);
 			}
 		}
 
-		// Consider forces from other side of wrap, too
-		// for (int j = 0; j < MAX_PARTICLES; j++)
-		// {
-		// 	if (i != j)
-		// 	{
-		// 		Particle pObject = particles[j];
-		// 		pObject.position.x -= CANVAS_WIDTH;
-		// 		Vector2 force = GetAttractionForce(particles[i], particles[j]);
-		// 		particles[i].velocity = Vector2Add(particles[i].velocity, force);
-		// 	}
-		// }
-		// // Consider forces from other side of wrap, too
-		// for (int j = 0; j < MAX_PARTICLES; j++)
-		// {
-		// 	if (i != j)
-		// 	{
-		// 		Particle pObject = particles[j];
-		// 		pObject.position.x += CANVAS_WIDTH;
-		// 		Vector2 force = GetAttractionForce(particles[i], particles[j]);
-		// 		particles[i].velocity = Vector2Add(particles[i].velocity, force);
-		// 	}
-		// }
+		totalForce = Vector2Scale(totalForce, maxDistance * forceFactor);
+
+		particles[i].velocity = Vector2Scale(particles[i].velocity, frictionFactor);
+		particles[i].velocity = Vector2Add(particles[i].velocity, Vector2Scale(totalForce, deltaTime));
+
 
 		// Update the particle's position based on its velocity
 		particles[i].position.x += particles[i].velocity.x * deltaTime;
 		particles[i].position.y += particles[i].velocity.y * deltaTime;
 
-		// Friction (stupid)
-		particles[i].velocity = Vector2Multiply(particles[i].velocity, 0.9);
-
 		// If the particle goes off the screen, wrap it around to the other side
 		if (particles[i].position.x < 0)
-			particles[i].position.x = CANVAS_WIDTH;
-		if (particles[i].position.x > CANVAS_WIDTH)
+			particles[i].position.x = CANVAS_ASPECT_RATIO;
+		if (particles[i].position.x > CANVAS_ASPECT_RATIO)
 			particles[i].position.x = 0;
 		if (particles[i].position.y < 0)
-			particles[i].position.y = CANVAS_HEIGHT;
-		if (particles[i].position.y > CANVAS_HEIGHT)
+			particles[i].position.y = 1;
+		if (particles[i].position.y > 1)
 			particles[i].position.y = 0;
+	}
 
-		// Draw the particle
-		// DrawPixel(particles[i].position.x, particles[i].position.y, particles[i].colorDraw);
-		DrawPoint(particles[i].position, particles[i].colorDraw);
+	// Draw each particle
+	for (int i = 0; i < MAX_PARTICLES; i++)
+	{
+		// Scale from world space to screen space
+		Vector2 posOnScreen = {particles[i].position.x * CANVAS_WIDTH / (CANVAS_ASPECT_RATIO), particles[i].position.y * CANVAS_HEIGHT};
+		DrawPoint(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
 	}
 }
