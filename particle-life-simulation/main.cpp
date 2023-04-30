@@ -1,4 +1,5 @@
 // TODO: Cell optimization https://youtu.be/9IULfQH7E90?t=231
+//	 TOOD: Have the particles consider the other particles from a wrapped neighboring cell as if they were beyond the edge of the area
 // Resources:
 // 		https://youtu.be/scvuli-zcRc
 //		https://www.reddit.com/r/raylib/comments/hcglzh/c_reasonable_performance_pixelbypixel_display/g212jbl/
@@ -7,15 +8,15 @@
 #include <raylib.h>
 #include <math.h>
 
-#define CANVAS_WIDTH (64 * 1) // Resolution of what you want to draw to
-#define CANVAS_HEIGHT (32 * 1)
+#define CANVAS_WIDTH (64 * 3) // Resolution of what you want to draw to
+#define CANVAS_HEIGHT (32 * 3)
 #define CANVAS_ASPECT_RATIO (CANVAS_WIDTH / CANVAS_HEIGHT)
 #define SCREEN_WIDTH (CANVAS_WIDTH * 4) // How big will it be on your screen?
 #define SCREEN_HEIGHT (CANVAS_HEIGHT * 4)
 
 #define CELL_GRID_WIDTH 4
 #define CELL_GRID_HEIGHT 2
-#define MAX_PARTICLES_PER_CELL 50
+#define MAX_PARTICLES_PER_CELL 100
 
 #define MAX_PARTICLES 200
 #define MAX_COLOR_GROUPS 2
@@ -65,9 +66,8 @@ Particle particles[MAX_PARTICLES];
 
 // In worldspace, the radius of the sphere of influence for each particle.
 const float maxDistance = 0.25; // Please let 2 be evenly divisible by this number, for cellSize's sake
-const float frictionHalfLife = 0.04;
 const float dt = 0.01;
-const float frictionFactor = pow(0.5, dt / frictionHalfLife);
+const float frictionFactor = 0.8;
 const float forceFactor = 5.0;
 
 struct Cell
@@ -151,6 +151,23 @@ void FrameBufferAddPix(int x, int y, PanelColor color)
 void FrameBufferAddPixV(Vector2 pos, PanelColor color)
 {
 	FrameBufferAddPix(pos.x, pos.y, color);
+}
+
+void GetNeighborCells(Cell **listToPopulate, int row, int col)
+{
+    uint8_t left = (col == 0) ? CELL_GRID_WIDTH - 1 : col - 1;
+    uint8_t right = (col + 1) % CELL_GRID_WIDTH;
+    uint8_t above = (row == 0) ? CELL_GRID_HEIGHT - 1 : row - 1;
+    uint8_t below = (row + 1) % CELL_GRID_HEIGHT;
+	listToPopulate[0] = &grid[above][left];
+	listToPopulate[1] = &grid[above][col];
+	listToPopulate[2] = &grid[above][right];
+	listToPopulate[3] = &grid[row][left];
+	listToPopulate[4] = &grid[row][col];
+	listToPopulate[5] = &grid[row][right];
+	listToPopulate[6] = &grid[below][left];
+	listToPopulate[7] = &grid[below][col];
+	listToPopulate[8] = &grid[below][right];
 }
 
 // PC display ----------------------------
@@ -327,7 +344,7 @@ void DrawPoint(Vector2 position, PanelColor color)
 float AttractionForceMag(float distance, float attractionFactor)
 {
 	// Closer than this, and the particles will push each other away
-	const float tooCloseDistance = 0.1;
+	const float tooCloseDistance = 0.4;
 	if (distance < tooCloseDistance)
 	{
 		// Get away from me!
@@ -365,15 +382,17 @@ void UpdateGrid()
 		// {
 		// 	printf("[%d][%d]\n", cell_row, cell_col);
 		// }
-		Cell* cell = &grid[cell_row][cell_col];
+		Cell *cell = &grid[cell_row][cell_col];
 		if (cell->particleCount < MAX_PARTICLES_PER_CELL)
 		{
 			cell->particleIndices[cell->particleCount] = i;
 			cell->particleCount++;
+		} else {
+			printf("Too many in [%d][%d]!\n", cell_row, cell_col);
 		}
 	}
 
-	printf("%d\n", grid[0][0].particleCount);
+	//printf("%d\n", grid[0][0].particleCount);
 }
 
 void randomizeAttractionFactorMatrix()
@@ -393,7 +412,7 @@ static void Initialize()
 	for (int i = 0; i < MAX_PARTICLES; i++)
 	{
 		particles[i].position = {RandFloat(0, CANVAS_ASPECT_RATIO), RandFloat(0, 1)};
-		// particles[i].velocity = { RandFloat(-50, 50), RandFloat(-50, 50) };
+		particles[i].velocity = { RandFloat(-50, 50), RandFloat(-50, 50) };
 		// particles[i].velocity = {RandFloat(-1, 1), RandFloat(-1, 1)};
 		particles[i].velocity = {0.0, 0.0};
 
@@ -405,7 +424,7 @@ static void Initialize()
 	// randomizeAttractionFactorMatrix();
 	attractionFactorMatrix[0][0] = 1.0;
 	attractionFactorMatrix[0][1] = -1.0;
-	attractionFactorMatrix[1][0] = 0.4;
+	attractionFactorMatrix[1][0] = 0.5;
 	attractionFactorMatrix[1][1] = 0.0;
 }
 
@@ -424,48 +443,107 @@ static void UpdateDrawFrame()
 
 	UpdateGrid();
 
-	// Update each particle
-	for (int i = 0; i < MAX_PARTICLES; i++)
+	// Update each particle, one cell at a time
+	for (int r = 0; r < CELL_GRID_HEIGHT; r++)
 	{
-		Vector2 totalForce = {0.0, 0.0}; // Will be accumulated when looping through neighbors
-		for (int j = 0; j < MAX_PARTICLES; j++)
+		for (int c = 0; c < CELL_GRID_WIDTH; c++)
 		{
-			if (j == i)
-				continue;
-			// Only deal with neighbors within sphere of influence
-			Vector2 delta = Vector2Subtract(particles[i].position, particles[j].position);
-			float distance = Vector2Length(delta);
-			if (distance > 0.0 && distance < maxDistance)
-			{
-				// How hard do I need to move?
-				float forceMag = AttractionForceMag(distance / maxDistance, attractionFactorMatrix[particles[i].colorGroup][particles[j].colorGroup]);
+			// Get list of the 8 neighboring cells and itself
+			Cell *neighborCells[9];
+			GetNeighborCells(neighborCells, r, c);
 
-				// Where do I need to move?
-				// Normalize then scale by force magnitude
-				Vector2 force = Vector2Scale(delta, -1.0 / distance * forceMag);
-				totalForce = Vector2Add(totalForce, force);
+			// Go through every particle in this cell
+			for (int pI = 0; pI < grid[r][c].particleCount; pI++)
+			{
+				uint16_t i = grid[r][c].particleIndices[pI];
+				Vector2 totalForce = {0.0, 0.0}; // Will be accumulated when looping through neighbors
+				// Go through each neighboring cell
+				for (int n = 0; n < 9; n++)
+				{
+					// Go through every particle in this cell
+					for (int pJ = 0; pJ < neighborCells[n]->particleCount; pJ++)
+					{
+						uint16_t j = neighborCells[n]->particleIndices[pJ];
+						if (&particles[j] == &particles[i])
+							continue;
+						// Only deal with neighbors within sphere of influence
+						Vector2 delta = Vector2Subtract(particles[i].position, particles[j].position);
+						float distance = Vector2Length(delta);
+						if (distance > 0.0 && distance < maxDistance)
+						{
+							// How hard do I need to move?
+							float forceMag = AttractionForceMag(distance / maxDistance, attractionFactorMatrix[particles[i].colorGroup][particles[j].colorGroup]);
+
+							// Where do I need to move?
+							// Normalize then scale by force magnitude
+							Vector2 force = Vector2Scale(delta, -1.0 / distance * forceMag);
+							totalForce = Vector2Add(totalForce, force);
+						}
+					}
+				}
+
+				totalForce = Vector2Scale(totalForce, maxDistance * forceFactor);
+
+				particles[i].velocity = Vector2Scale(particles[i].velocity, frictionFactor);
+				particles[i].velocity = Vector2Add(particles[i].velocity, Vector2Scale(totalForce, deltaTime));
+
+				// Update the particle's position based on its velocity
+				particles[i].position.x += particles[i].velocity.x * deltaTime;
+				particles[i].position.y += particles[i].velocity.y * deltaTime;
+
+				// If the particle goes off the screen, wrap it around to the other side
+				if (particles[i].position.x < 0)
+					particles[i].position.x = 1.9;
+				if (particles[i].position.x > 2)
+					particles[i].position.x = 0.1;
+				if (particles[i].position.y < 0)
+					particles[i].position.y = 0.9;
+				if (particles[i].position.y > 1)
+					particles[i].position.y = 0.1;
 			}
 		}
-
-		totalForce = Vector2Scale(totalForce, maxDistance * forceFactor);
-
-		particles[i].velocity = Vector2Scale(particles[i].velocity, frictionFactor);
-		particles[i].velocity = Vector2Add(particles[i].velocity, Vector2Scale(totalForce, deltaTime));
-
-		// Update the particle's position based on its velocity
-		particles[i].position.x += particles[i].velocity.x * deltaTime;
-		particles[i].position.y += particles[i].velocity.y * deltaTime;
-
-		// If the particle goes off the screen, wrap it around to the other side
-		if (particles[i].position.x < 0)
-			particles[i].position.x = CANVAS_ASPECT_RATIO;
-		if (particles[i].position.x > CANVAS_ASPECT_RATIO)
-			particles[i].position.x = 0;
-		if (particles[i].position.y < 0)
-			particles[i].position.y = 1;
-		if (particles[i].position.y > 1)
-			particles[i].position.y = 0;
 	}
+	// for (int i = 0; i < MAX_PARTICLES; i++)
+	// {
+	// 	Vector2 totalForce = {0.0, 0.0}; // Will be accumulated when looping through neighbors
+	// 	for (int j = 0; j < MAX_PARTICLES; j++)
+	// 	{
+	// 		if (j == i)
+	// 			continue;
+	// 		// Only deal with neighbors within sphere of influence
+	// 		Vector2 delta = Vector2Subtract(particles[i].position, particles[j].position);
+	// 		float distance = Vector2Length(delta);
+	// 		if (distance > 0.0 && distance < maxDistance)
+	// 		{
+	// 			// How hard do I need to move?
+	// 			float forceMag = AttractionForceMag(distance / maxDistance, attractionFactorMatrix[particles[i].colorGroup][particles[j].colorGroup]);
+
+	// 			// Where do I need to move?
+	// 			// Normalize then scale by force magnitude
+	// 			Vector2 force = Vector2Scale(delta, -1.0 / distance * forceMag);
+	// 			totalForce = Vector2Add(totalForce, force);
+	// 		}
+	// 	}
+
+	// 	totalForce = Vector2Scale(totalForce, maxDistance * forceFactor);
+
+	// 	particles[i].velocity = Vector2Scale(particles[i].velocity, frictionFactor);
+	// 	particles[i].velocity = Vector2Add(particles[i].velocity, Vector2Scale(totalForce, deltaTime));
+
+	// 	// Update the particle's position based on its velocity
+	// 	particles[i].position.x += particles[i].velocity.x * deltaTime;
+	// 	particles[i].position.y += particles[i].velocity.y * deltaTime;
+
+	// 	// If the particle goes off the screen, wrap it around to the other side
+	// 	if (particles[i].position.x < 0)
+	// 		particles[i].position.x = CANVAS_ASPECT_RATIO;
+	// 	if (particles[i].position.x > CANVAS_ASPECT_RATIO)
+	// 		particles[i].position.x = 0;
+	// 	if (particles[i].position.y < 0)
+	// 		particles[i].position.y = 1;
+	// 	if (particles[i].position.y > 1)
+	// 		particles[i].position.y = 0;
+	// }
 
 	// Draw each particle
 	for (int i = 0; i < MAX_PARTICLES; i++)
