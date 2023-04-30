@@ -7,11 +7,11 @@
 #include <raylib.h>
 #include <math.h>
 
-#define CANVAS_WIDTH (64 * 1) // Resolution of what you want to draw to
-#define CANVAS_HEIGHT (32 * 1)
+#define CANVAS_WIDTH (64 * 4) // Resolution of what you want to draw to
+#define CANVAS_HEIGHT (32 * 4)
 #define CANVAS_ASPECT_RATIO (CANVAS_WIDTH / CANVAS_HEIGHT)
-#define SCREEN_WIDTH (CANVAS_WIDTH * 6) // How big will it be on your screen?
-#define SCREEN_HEIGHT (CANVAS_HEIGHT * 6)
+#define SCREEN_WIDTH (CANVAS_WIDTH * 4) // How big will it be on your screen?
+#define SCREEN_HEIGHT (CANVAS_HEIGHT * 4)
 
 #define MAX_PARTICLES 250
 #define MAX_COLOR_GROUPS 2
@@ -25,10 +25,16 @@ using namespace std;
 static void Initialize(void);
 static void UpdateDrawFrame(void); // Update and draw one frame
 
-// Set and get pixels from here
-Color FrameBuffer[CANVAS_HEIGHT][CANVAS_WIDTH];
+const uint8_t PanelColorDepth = 3; // Per channel
+struct PanelColor
+{
+	uint8_t r;
+	uint8_t g;
+	uint8_t b;
+};
 
-// Image canvasImage = { .data = FrameBuffer, .width = CANVAS_WIDTH, .height = CANVAS_HEIGHT, .mipmaps = 1, .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+// Set and get pixels from here
+PanelColor FrameBuffer[CANVAS_HEIGHT][CANVAS_WIDTH];
 
 enum ColorGroup
 {
@@ -37,10 +43,10 @@ enum ColorGroup
 	GROUP_YELLOW
 };
 
-const Color ColorGroupColors[] = {
-	{255, 20, 67, 255},
-	{20, 200, 255, 255},
-	{255, 200, 20, 255}};
+const PanelColor ColorGroupColors[] = {
+	{255, 20, 67},
+	{20, 200, 255},
+	{255, 200, 20}};
 
 float attractionFactorMatrix[MAX_COLOR_GROUPS][MAX_COLOR_GROUPS];
 
@@ -74,16 +80,15 @@ uint8_t AddClamp(uint8_t a, uint8_t b)
 	}
 }
 
-Color ColorAdd(Color a, Color b)
+PanelColor PanelColorAdd(PanelColor a, PanelColor b)
 {
 	return {
 		AddClamp(a.r, b.r),
 		AddClamp(a.g, b.g),
-		AddClamp(a.b, b.b),
-		AddClamp(a.a, b.a)};
+		AddClamp(a.b, b.b)};
 }
 
-void FrameBufferClear(Color color)
+void FrameBufferClear(PanelColor color)
 {
 	for (int y = 0; y < CANVAS_HEIGHT; y++)
 	{
@@ -94,7 +99,7 @@ void FrameBufferClear(Color color)
 	}
 }
 
-void FrameBufferSetPix(int x, int y, Color color)
+void FrameBufferSetPix(int x, int y, PanelColor color)
 {
 	if (x < 0 || y < 0)
 		return;
@@ -103,35 +108,48 @@ void FrameBufferSetPix(int x, int y, Color color)
 	FrameBuffer[y][x] = color;
 }
 
-void FrameBufferSetPixV(Vector2 pos, Color color)
+void FrameBufferSetPixV(Vector2 pos, PanelColor color)
 {
 	FrameBufferSetPix(pos.x, pos.y, color);
 }
 
-Color FrameBufferGetPix(int x, int y)
+PanelColor FrameBufferGetPix(int x, int y)
 {
 	return FrameBuffer[y][x];
 }
 
-Color FrameBufferGetPixV(Vector2 pos)
+PanelColor FrameBufferGetPixV(Vector2 pos)
 {
 	return FrameBufferGetPix(pos.x, pos.y);
 }
 
-void FrameBufferAddPix(int x, int y, Color color)
+void FrameBufferAddPix(int x, int y, PanelColor color)
 {
 	if (x < 0 || y < 0)
 		return;
 	if (x > CANVAS_WIDTH - 1 || y > CANVAS_HEIGHT - 1)
 		return;
-	FrameBufferSetPix(x, y, ColorAdd(FrameBufferGetPix(x, y), color));
+	FrameBufferSetPix(x, y, PanelColorAdd(FrameBufferGetPix(x, y), color));
 }
 
-void FrameBufferAddPixV(Vector2 pos, Color color)
+void FrameBufferAddPixV(Vector2 pos, PanelColor color)
 {
 	FrameBufferAddPix(pos.x, pos.y, color);
 }
 
+// PC display ----------------------------
+
+// Since Panel Color is low bit depth
+Color PanelColorToColor(PanelColor color){
+	// Discard lower bits
+	uint8_t mask = (1 << (8 - PanelColorDepth)) - 1; // Create mask with 1's in the most significant bits
+	return {
+		color.r & ~mask,
+		color.g & ~mask,
+		color.b & ~mask,
+		255
+	};
+}
 
 //----------------------------------------------------------------------------------
 // Main entry point
@@ -158,7 +176,7 @@ int main(void)
 		{
 			for (int x = 0; x < CANVAS_WIDTH; x++)
 			{
-				DrawPixel(x, y, FrameBufferGetPix(x, y));
+				DrawPixel(x, y, PanelColorToColor(FrameBufferGetPix(x, y)));
 			}
 		}
 		EndTextureMode();
@@ -248,19 +266,20 @@ Vector2 Vector2Normalize(Vector2 vec)
 	return vec;
 }
 
-Color MultiplyColor(Color color, float value)
+PanelColor PanelColorMultiply(PanelColor color, float value)
 {
-	return (Color){
-		(uint8_t)(color.r * value),
-		(uint8_t)(color.g * value),
-		(uint8_t)(color.b * value),
-		(uint8_t)(color.a)};
+    return {
+        (uint8_t)(color.r * value),
+        (uint8_t)(color.g * value),
+        (uint8_t)(color.b * value)
+    };
 }
+
 
 // Draws a point on the screen at a sub-pixel level, unlike DrawPixel.
 // If the point is in-between screen pixels, it will be rendered using
 // its neighboring pixels.
-void DrawPoint(Vector2 position, Color color)
+void DrawPoint(Vector2 position, PanelColor color)
 {
 	// Find the corners of the imaginary pixel-sized square around the point
 	Vector2 cornerTopLeft = {position.x - 0.5f, position.y - 0.5f};
@@ -279,10 +298,10 @@ void DrawPoint(Vector2 position, Color color)
 	float areaBottomRight = SquareIntersectionArea(cornerTopLeft, pixelCornerBottomRight);
 
 	// Find fractions of color
-	Color colorTopLeft = MultiplyColor(color, areaTopLeft);
-	Color colorTopRight = MultiplyColor(color, areaTopRight);
-	Color colorBottomLeft = MultiplyColor(color, areaBottomLeft);
-	Color colorBottomRight = MultiplyColor(color, areaBottomRight);
+	PanelColor colorTopLeft = PanelColorMultiply(color, areaTopLeft);
+	PanelColor colorTopRight = PanelColorMultiply(color, areaTopRight);
+	PanelColor colorBottomLeft = PanelColorMultiply(color, areaBottomLeft);
+	PanelColor colorBottomRight = PanelColorMultiply(color, areaBottomRight);
 
 	// Set pixels
 	// DrawPixelV(pixelCornerTopLeft, colorTopLeft);
@@ -341,7 +360,7 @@ static void Initialize()
 		// particles[i].colorDraw = ColorGroupColors[particles[i].colorGroup];
 	}
 
-	//randomizeAttractionFactorMatrix();
+	// randomizeAttractionFactorMatrix();
 	attractionFactorMatrix[0][0] = 1.0;
 	attractionFactorMatrix[0][1] = -1.0;
 	attractionFactorMatrix[1][0] = 0.4;
@@ -350,13 +369,16 @@ static void Initialize()
 
 static void UpdateDrawFrame()
 {
+	static int t = 0;
+	t++;
+
 	// Update time
 	static unsigned long prevMillis = 0;
 	unsigned long currentMillis = millis();
 	float deltaTime = (currentMillis - prevMillis) / 1000.0f;
 	prevMillis = currentMillis;
 
-	FrameBufferClear({0, 0, 0, 255});
+	FrameBufferClear({0, 0, 0});
 
 	// Update each particle
 	for (int i = 0; i < MAX_PARTICLES; i++)
