@@ -7,13 +7,17 @@
 #include <raylib.h>
 #include <math.h>
 
-#define CANVAS_WIDTH (64 * 4) // Resolution of what you want to draw to
-#define CANVAS_HEIGHT (32 * 4)
+#define CANVAS_WIDTH (64 * 1) // Resolution of what you want to draw to
+#define CANVAS_HEIGHT (32 * 1)
 #define CANVAS_ASPECT_RATIO (CANVAS_WIDTH / CANVAS_HEIGHT)
 #define SCREEN_WIDTH (CANVAS_WIDTH * 4) // How big will it be on your screen?
 #define SCREEN_HEIGHT (CANVAS_HEIGHT * 4)
 
-#define MAX_PARTICLES 250
+#define CELL_GRID_WIDTH 4
+#define CELL_GRID_HEIGHT 2
+#define MAX_PARTICLES_PER_CELL 50
+
+#define MAX_PARTICLES 200
 #define MAX_COLOR_GROUPS 2
 
 using namespace std;
@@ -60,11 +64,23 @@ struct Particle
 Particle particles[MAX_PARTICLES];
 
 // In worldspace, the radius of the sphere of influence for each particle.
-const float maxDistance = 0.3;
+const float maxDistance = 0.25; // Please let 2 be evenly divisible by this number, for cellSize's sake
 const float frictionHalfLife = 0.04;
 const float dt = 0.01;
 const float frictionFactor = pow(0.5, dt / frictionHalfLife);
 const float forceFactor = 5.0;
+
+struct Cell
+{
+	uint16_t particleIndices[MAX_PARTICLES_PER_CELL];
+	uint8_t particleCount;
+};
+
+// Divide the area into cells whos size is the
+// diameter of the circle of influence for every particle
+const float cellSize = maxDistance * 2.0;
+// Each grid cell contains a list of particles within its bounds.
+Cell grid[CELL_GRID_HEIGHT][CELL_GRID_WIDTH];
 
 // If there is an overflow, return 255
 uint8_t AddClamp(uint8_t a, uint8_t b)
@@ -140,15 +156,15 @@ void FrameBufferAddPixV(Vector2 pos, PanelColor color)
 // PC display ----------------------------
 
 // Since Panel Color is low bit depth
-Color PanelColorToColor(PanelColor color){
+Color PanelColorToColor(PanelColor color)
+{
 	// Discard lower bits
 	uint8_t mask = (1 << (8 - PanelColorDepth)) - 1; // Create mask with 1's in the most significant bits
 	return {
 		color.r & ~mask,
 		color.g & ~mask,
 		color.b & ~mask,
-		255
-	};
+		255};
 }
 
 //----------------------------------------------------------------------------------
@@ -162,7 +178,7 @@ int main(void)
 	Rectangle source = {0, (float)-CANVAS_HEIGHT, (float)CANVAS_WIDTH, (float)-CANVAS_HEIGHT}; // - Because OpenGL coordinates are inverted
 	Rectangle dest = {0, 0, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT};
 
-	SetTargetFPS(144);
+	SetTargetFPS(60);
 
 	Initialize();
 
@@ -268,13 +284,11 @@ Vector2 Vector2Normalize(Vector2 vec)
 
 PanelColor PanelColorMultiply(PanelColor color, float value)
 {
-    return {
-        (uint8_t)(color.r * value),
-        (uint8_t)(color.g * value),
-        (uint8_t)(color.b * value)
-    };
+	return {
+		(uint8_t)(color.r * value),
+		(uint8_t)(color.g * value),
+		(uint8_t)(color.b * value)};
 }
-
 
 // Draws a point on the screen at a sub-pixel level, unlike DrawPixel.
 // If the point is in-between screen pixels, it will be rendered using
@@ -304,10 +318,6 @@ void DrawPoint(Vector2 position, PanelColor color)
 	PanelColor colorBottomRight = PanelColorMultiply(color, areaBottomRight);
 
 	// Set pixels
-	// DrawPixelV(pixelCornerTopLeft, colorTopLeft);
-	// DrawPixelV(pixelCornerTopRight, colorTopRight);
-	// DrawPixelV(pixelCornerBottomLeft, colorBottomLeft);
-	// DrawPixelV(pixelCornerBottomRight, colorBottomRight);
 	FrameBufferAddPixV(pixelCornerTopLeft, colorTopLeft);
 	FrameBufferAddPixV(pixelCornerTopRight, colorTopRight);
 	FrameBufferAddPixV(pixelCornerBottomLeft, colorBottomLeft);
@@ -332,6 +342,38 @@ float AttractionForceMag(float distance, float attractionFactor)
 	{
 		return 0.0;
 	}
+}
+
+void UpdateGrid()
+{
+	// Clear the list of particles for each cell
+	for (int i = 0; i < CELL_GRID_HEIGHT; i++)
+	{
+		for (int j = 0; j < CELL_GRID_WIDTH; j++)
+		{
+			grid[i][j].particleCount = 0;
+		}
+	}
+
+	// Add each particle to the list of particles for its corresponding cell
+	for (int i = 0; i < MAX_PARTICLES; i++)
+	{
+
+		int cell_row = particles[i].position.y / cellSize;
+		int cell_col = particles[i].position.x / cellSize;
+		// if (i == 0)
+		// {
+		// 	printf("[%d][%d]\n", cell_row, cell_col);
+		// }
+		Cell* cell = &grid[cell_row][cell_col];
+		if (cell->particleCount < MAX_PARTICLES_PER_CELL)
+		{
+			cell->particleIndices[cell->particleCount] = i;
+			cell->particleCount++;
+		}
+	}
+
+	printf("%d\n", grid[0][0].particleCount);
 }
 
 void randomizeAttractionFactorMatrix()
@@ -379,6 +421,8 @@ static void UpdateDrawFrame()
 	prevMillis = currentMillis;
 
 	FrameBufferClear({0, 0, 0});
+
+	UpdateGrid();
 
 	// Update each particle
 	for (int i = 0; i < MAX_PARTICLES; i++)
@@ -430,5 +474,16 @@ static void UpdateDrawFrame()
 		Vector2 posOnScreen = {particles[i].position.x * CANVAS_WIDTH / (CANVAS_ASPECT_RATIO), particles[i].position.y * CANVAS_HEIGHT};
 		DrawPoint(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
 		// FrameBufferSetPixV(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
+		if (i == 0)
+		{
+			if (t % 8 == 0)
+			{
+				FrameBufferSetPixV(posOnScreen, {255, 255, 0});
+			}
+			else
+			{
+				FrameBufferSetPixV(posOnScreen, {0, 0, 255});
+			}
+		}
 	}
 }
