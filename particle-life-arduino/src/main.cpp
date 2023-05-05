@@ -1,11 +1,13 @@
 #include <Arduino.h>
 #include <RGBmatrixPanel.h>
 #include <math.h>
+#include <string.h>
+#include <stdlib.h>
 
 #define SCREEN_WIDTH 64
 #define SCREEN_HEIGHT 32
 
-#define CANVAS_WIDTH SCREEN_WIDTH 
+#define CANVAS_WIDTH SCREEN_WIDTH
 #define CANVAS_HEIGHT SCREEN_HEIGHT
 #define CANVAS_ASPECT_RATIO (CANVAS_WIDTH / CANVAS_HEIGHT)
 
@@ -13,30 +15,31 @@
 #define CELL_GRID_HEIGHT 2
 #define MAX_PARTICLES_PER_CELL 100
 
-#define MAX_PARTICLES 100
+#define MAX_PARTICLES 5
 #define MAX_COLOR_GROUPS 2
 
 #define CLK 11 // USE THIS ON ARDUINO MEGA
-#define OE   9
+#define OE 9
 #define LAT 10
-#define A   A0
-#define B   A1
-#define C   A2
-#define D   A3
-
+#define A A0
+#define B A1
+#define C A2
+#define D A3
 
 RGBmatrixPanel matrix(A, B, C, D, CLK, LAT, OE, true, 64);
 
-int ScreenWidth() {
-    return SCREEN_WIDTH;
+int ScreenWidth()
+{
+	return SCREEN_WIDTH;
 }
 
-int ScreenHeight() {
-    return SCREEN_HEIGHT;
+int ScreenHeight()
+{
+	return SCREEN_HEIGHT;
 }
 
-
-struct Vector2 {
+struct Vector2
+{
 	float x, y;
 };
 
@@ -49,7 +52,7 @@ struct PanelColor
 };
 
 // Set and get pixels from here
-//PanelColor FrameBuffer[CANVAS_HEIGHT][CANVAS_WIDTH];
+// PanelColor FrameBuffer[CANVAS_HEIGHT][CANVAS_WIDTH];
 
 enum ColorGroup
 {
@@ -64,7 +67,7 @@ const PanelColor ColorGroupColors[] = {
 	{255, 200, 20},
 	{255, 255, 255},
 	{20, 255, 180},
-	};
+};
 
 float attractionFactorMatrix[MAX_COLOR_GROUPS][MAX_COLOR_GROUPS];
 
@@ -126,10 +129,11 @@ PanelColor PanelColorAdd(PanelColor a, PanelColor b)
 		AddClamp(a.b, b.b)};
 }
 
-uint16_t PanelColor333(PanelColor panelColor){
-	return matrix.Color333(panelColor.r, panelColor.g, panelColor.b);
+uint16_t PanelColor333(PanelColor panelColor)
+{
+	// uint8_t mask = (1 << (8 - PanelColorDepth)) - 1;
+	return matrix.Color333(panelColor.r / 32, panelColor.g / 32, panelColor.b / 32);
 }
-
 
 // void FrameBufferSetPix(int x, int y, PanelColor color)
 // {
@@ -229,9 +233,6 @@ void GetNeighborCells(Cell **listToPopulate, int row, int col, CellWrap *wrapLis
 		wrapList[8].wrappedBottom = true;
 	}
 }
-
-
-
 
 // ------------------------------------------------------------
 
@@ -382,7 +383,7 @@ void UpdateGrid()
 
 		int cell_row = particles[i].position.y / cellSize;
 		int cell_col = particles[i].position.x / cellSize;
-		
+
 		Cell *cell = &grid[cell_row][cell_col];
 		if (cell->particleCount < MAX_PARTICLES_PER_CELL)
 		{
@@ -390,7 +391,6 @@ void UpdateGrid()
 			cell->particleCount++;
 		}
 	}
-
 }
 
 void randomizeAttractionFactorMatrix()
@@ -410,99 +410,64 @@ static void Initialize()
 	for (int i = 0; i < MAX_PARTICLES; i++)
 	{
 		particles[i].position = {RandFloat(0, CANVAS_ASPECT_RATIO), RandFloat(0, 1)};
-		particles[i].velocity = {RandFloat(-50, 50), RandFloat(-50, 50)};
-		// particles[i].velocity = {RandFloat(-1, 1), RandFloat(-1, 1)};
-		particles[i].velocity = {0.0, 0.0};
+		//particles[i].velocity = {RandFloat(-10, 10), RandFloat(-10, 10)};
+		particles[i].velocity = {RandFloat(-1, 1), RandFloat(-1, 1)};
+		//particles[i].velocity = {0.0, 0.0};
 
 		particles[i].colorGroup = (ColorGroup)RandByte(GROUP_RED, MAX_COLOR_GROUPS - 1);
 
 		// particles[i].colorDraw = ColorGroupColors[particles[i].colorGroup];
 	}
 
-	//randomizeAttractionFactorMatrix();
+	// randomizeAttractionFactorMatrix();
 	attractionFactorMatrix[0][0] = 1.0;
 	attractionFactorMatrix[0][1] = -1.0;
 	attractionFactorMatrix[1][0] = 0.2;
 	attractionFactorMatrix[1][1] = 0.0;
 }
 
-
 void FrameBufferClear(PanelColor color)
 {
 	matrix.fillScreen(PanelColor333(color));
 }
 
-PanelColor HSVtoRGB(float H, float S, float V) {
-    if (H > 360 || H < 0 || S>100 || S < 0 || V>100 || V < 0) {
-        PanelColor col = { 7, 7, 7 };
-    }
-    float s = S / 100;
-    float v = V / 100;
-    float C = s * v;
-    float X = C * (1 - abs(fmod(H / 60.0, 2) - 1));
-    float m = v - C;
-    float r, g, b;
-    if (H >= 0 && H < 60) {
-        r = C, g = X, b = 0;
-    }
-    else if (H >= 60 && H < 120) {
-        r = X, g = C, b = 0;
-    }
-    else if (H >= 120 && H < 180) {
-        r = 0, g = C, b = X;
-    }
-    else if (H >= 180 && H < 240) {
-        r = 0, g = X, b = C;
-    }
-    else if (H >= 240 && H < 300) {
-        r = X, g = 0, b = C;
-    }
-    else {
-        r = C, g = 0, b = X;
-    }
-    int R = (r + m) * 7;
-    int G = (g + m) * 7;
-    int B = (b + m) * 7;
-    PanelColor col = { R, G, B };
-    return col;
+int subtract_capped(int a, int b)
+{
+	a -= b;
+	if (a < 0)
+	{
+		a = 0;
+	}
+	return a;
 }
 
-int subtract_capped(int a, int b) {
-    a -= b;
-    if (a < 0) {
-        a = 0;
-    }
-    return a;
-}
-
-
-void setup() {
-    Serial.begin(9600);
-    Serial.println("Hello World!");
+void setup()
+{
+	Serial.begin(9600);
+	Serial.println("Hello World!");
 
 	Initialize();
 
-    matrix.begin();
+	matrix.begin();
 }
 
-
-void loop() {
-	Serial.println("hi");
-    //t = float(millis()) / 1000.0;
+void loop()
+{
+	// Serial.println("hi");
+	// t = float(millis()) / 1000.0;
 
 	static uint16_t frameCount = 0;
 	frameCount++;
 
 	// Update time
-	// static unsigned long prevMillis = 0;
-	// unsigned long currentMillis = millis();
-	// float deltaTime = (currentMillis - prevMillis) / 1000.0f;
-	// prevMillis = currentMillis;
+	static unsigned long prevMillis = 0;
+	unsigned long currentMillis = millis();
+	float deltaTime = (currentMillis - prevMillis) / 1000.0f;
+	prevMillis = currentMillis;
 
+	FrameBufferClear({0, 0, 0});
 
-	FrameBufferClear({frameCount % 2, 0, 0});
-
-	//UpdateGrid();
+	// UpdateGrid();
 
 	// // Update each particle, one cell at a time
 	// for (int r = 0; r < CELL_GRID_HEIGHT; r++)
@@ -588,14 +553,34 @@ void loop() {
 	// 	}
 	// }
 
+	for (int i = 0; i < MAX_PARTICLES; i++)
+	{
+		// Update the particle's position based on its velocity
+		particles[i].position.x += particles[i].velocity.x * deltaTime;
+		particles[i].position.y += particles[i].velocity.y * deltaTime;
+
+		// If the particle goes off the screen, wrap it around to the other side
+		if (particles[i].position.x < 0.01)
+			particles[i].position.x = 1.99;
+		if (particles[i].position.x > 2)
+			particles[i].position.x = 0.01;
+		if (particles[i].position.y < 0.01)
+			particles[i].position.y = 0.99;
+		if (particles[i].position.y > 1)
+			particles[i].position.y = 0.01;
+	}
+
 	// Draw each particle
 	for (int i = 0; i < MAX_PARTICLES; i++)
 	{
 		// Scale from world space to screen space
 		Vector2 posOnScreen = {particles[i].position.x * CANVAS_WIDTH / (CANVAS_ASPECT_RATIO), particles[i].position.y * CANVAS_HEIGHT};
-		//DrawPoint(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
-		matrix.drawPixel(posOnScreen.x, posOnScreen.y, PanelColor333(ColorGroupColors[particles[i].colorGroup]));
+		DrawPoint(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
+		// char report[64];
+		// sprintf(report, "%d: %d, %d; ",  i, (int)posOnScreen.x, (int)posOnScreen.y);
+		// Serial.println(report);
+		// matrix.drawPixel(posOnScreen.x, posOnScreen.y, PanelColor333(ColorGroupColors[particles[i].colorGroup]));
 	}
-    
-    matrix.swapBuffers(false);
+
+	matrix.swapBuffers(false);
 }
