@@ -530,19 +530,19 @@ static void UpdateDrawFrame()
 						if (neighborCellWraps[n].wrappedLeft)
 						{
 							// TODO: let these not be constants. Should be aspect ratio (width of field in particle's float coord system)
-							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {-2.0, 0.0});
+							particleObjPercievedPos.x -= CANVAS_ASPECT_RATIO;
 						}
 						if (neighborCellWraps[n].wrappedRight)
 						{
-							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {2.0, 0.0});
+							particleObjPercievedPos.x += CANVAS_ASPECT_RATIO;
 						}
 						if (neighborCellWraps[n].wrappedTop)
 						{
-							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {0.0, -1.0});
+							particleObjPercievedPos.y -= 1.0;
 						}
 						if (neighborCellWraps[n].wrappedBottom)
 						{
-							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {0.0, 1.0});
+							particleObjPercievedPos.y += 1.0;
 						}
 
 						// Only deal with neighbors within sphere of influence
@@ -574,7 +574,7 @@ static void UpdateDrawFrame()
 				if (particles[i].position.x < 0.01)
 					particles[i].position.x = 1.99;
 				if (particles[i].position.x > 2)
-					particles[i].position.x = 0;
+					particles[i].position.x = 0.01;
 				if (particles[i].position.y < 0.01)
 					particles[i].position.y = 0.99;
 				if (particles[i].position.y > 1)
