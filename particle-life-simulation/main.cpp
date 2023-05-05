@@ -8,18 +8,18 @@
 #include <raylib.h>
 #include <math.h>
 
-#define CANVAS_WIDTH (64 * 3) // Resolution of what you want to draw to
-#define CANVAS_HEIGHT (32 * 3)
+#define CANVAS_WIDTH (64 * 1) // Resolution of what you want to draw to
+#define CANVAS_HEIGHT (32 * 1)
 #define CANVAS_ASPECT_RATIO (CANVAS_WIDTH / CANVAS_HEIGHT)
-#define SCREEN_WIDTH (CANVAS_WIDTH * 4) // How big will it be on your screen?
-#define SCREEN_HEIGHT (CANVAS_HEIGHT * 4)
+#define SCREEN_WIDTH (CANVAS_WIDTH * 9) // How big will it be on your screen?
+#define SCREEN_HEIGHT (CANVAS_HEIGHT * 9)
 
 #define CELL_GRID_WIDTH 4
 #define CELL_GRID_HEIGHT 2
 #define MAX_PARTICLES_PER_CELL 100
 
 #define MAX_PARTICLES 200
-#define MAX_COLOR_GROUPS 2
+#define MAX_COLOR_GROUPS 3
 
 using namespace std;
 
@@ -29,6 +29,7 @@ using namespace std;
 
 static void Initialize(void);
 static void UpdateDrawFrame(void); // Update and draw one frame
+static void randomizeAttractionFactorMatrix(void);
 
 const uint8_t PanelColorDepth = 3; // Per channel
 struct PanelColor
@@ -51,7 +52,10 @@ enum ColorGroup
 const PanelColor ColorGroupColors[] = {
 	{255, 20, 67},
 	{20, 200, 255},
-	{255, 200, 20}};
+	{255, 200, 20},
+	{255, 255, 255},
+	{20, 255, 180},
+	};
 
 float attractionFactorMatrix[MAX_COLOR_GROUPS][MAX_COLOR_GROUPS];
 
@@ -74,6 +78,15 @@ struct Cell
 {
 	uint16_t particleIndices[MAX_PARTICLES_PER_CELL];
 	uint8_t particleCount;
+};
+
+// Used to define which way a neighboring cell is wrapped around the edge of the area
+struct CellWrap
+{
+	bool wrappedLeft;
+	bool wrappedRight;
+	bool wrappedTop;
+	bool wrappedBottom;
 };
 
 // Divide the area into cells whos size is the
@@ -153,12 +166,28 @@ void FrameBufferAddPixV(Vector2 pos, PanelColor color)
 	FrameBufferAddPix(pos.x, pos.y, color);
 }
 
-void GetNeighborCells(Cell **listToPopulate, int row, int col)
+void InitCellWraps(CellWrap *neighborCellWraps, uint8_t size)
 {
-    uint8_t left = (col == 0) ? CELL_GRID_WIDTH - 1 : col - 1;
-    uint8_t right = (col + 1) % CELL_GRID_WIDTH;
-    uint8_t above = (row == 0) ? CELL_GRID_HEIGHT - 1 : row - 1;
-    uint8_t below = (row + 1) % CELL_GRID_HEIGHT;
+	for (uint8_t i = 0; i < size; i++)
+	{
+		neighborCellWraps[i].wrappedLeft = false;
+		neighborCellWraps[i].wrappedRight = false;
+		neighborCellWraps[i].wrappedTop = false;
+		neighborCellWraps[i].wrappedBottom = false;
+	}
+}
+
+void GetNeighborCells(Cell **listToPopulate, int row, int col, CellWrap *wrapList)
+{
+	uint8_t left = (col == 0) ? CELL_GRID_WIDTH - 1 : col - 1;
+	uint8_t right = (col + 1) % CELL_GRID_WIDTH;
+	uint8_t above = (row == 0) ? CELL_GRID_HEIGHT - 1 : row - 1;
+	uint8_t below = (row + 1) % CELL_GRID_HEIGHT;
+	/*
+	012
+	345
+	678
+	*/
 	listToPopulate[0] = &grid[above][left];
 	listToPopulate[1] = &grid[above][col];
 	listToPopulate[2] = &grid[above][right];
@@ -168,6 +197,34 @@ void GetNeighborCells(Cell **listToPopulate, int row, int col)
 	listToPopulate[6] = &grid[below][left];
 	listToPopulate[7] = &grid[below][col];
 	listToPopulate[8] = &grid[below][right];
+
+	// Which way are the cells wrapped?
+	if (col == 0)
+	{
+		// If the leftmost column, the left neighbors are all wrapped
+		wrapList[0].wrappedLeft = true;
+		wrapList[3].wrappedLeft = true;
+		wrapList[6].wrappedLeft = true;
+	}
+	else if (col == CELL_GRID_WIDTH - 1)
+	{
+		// If the rightmost column, the right neighbors are all wrapped
+		wrapList[2].wrappedRight = true;
+		wrapList[5].wrappedRight = true;
+		wrapList[8].wrappedRight = true;
+	}
+	if (row == 0)
+	{
+		wrapList[0].wrappedTop = true;
+		wrapList[1].wrappedTop = true;
+		wrapList[2].wrappedTop = true;
+	}
+	else if (row == CELL_GRID_HEIGHT - 1)
+	{
+		wrapList[6].wrappedBottom = true;
+		wrapList[7].wrappedBottom = true;
+		wrapList[8].wrappedBottom = true;
+	}
 }
 
 // PC display ----------------------------
@@ -220,6 +277,11 @@ int main(void)
 		DrawTexturePro(renderTexture.texture, source, dest, (Vector2){0, 0}, 0.0f, WHITE);
 		// DrawFPS(16, 16);
 		EndDrawing();
+
+		// If R is pressed, run randomizeAttractionFactorMatrix();
+		if (IsKeyPressed(KEY_R)){
+			randomizeAttractionFactorMatrix();
+		}
 	}
 
 	CloseWindow(); // Close window and OpenGL context
@@ -378,21 +440,15 @@ void UpdateGrid()
 
 		int cell_row = particles[i].position.y / cellSize;
 		int cell_col = particles[i].position.x / cellSize;
-		// if (i == 0)
-		// {
-		// 	printf("[%d][%d]\n", cell_row, cell_col);
-		// }
+		
 		Cell *cell = &grid[cell_row][cell_col];
 		if (cell->particleCount < MAX_PARTICLES_PER_CELL)
 		{
 			cell->particleIndices[cell->particleCount] = i;
 			cell->particleCount++;
-		} else {
-			printf("Too many in [%d][%d]!\n", cell_row, cell_col);
 		}
 	}
 
-	//printf("%d\n", grid[0][0].particleCount);
 }
 
 void randomizeAttractionFactorMatrix()
@@ -412,7 +468,7 @@ static void Initialize()
 	for (int i = 0; i < MAX_PARTICLES; i++)
 	{
 		particles[i].position = {RandFloat(0, CANVAS_ASPECT_RATIO), RandFloat(0, 1)};
-		particles[i].velocity = { RandFloat(-50, 50), RandFloat(-50, 50) };
+		particles[i].velocity = {RandFloat(-50, 50), RandFloat(-50, 50)};
 		// particles[i].velocity = {RandFloat(-1, 1), RandFloat(-1, 1)};
 		particles[i].velocity = {0.0, 0.0};
 
@@ -421,11 +477,11 @@ static void Initialize()
 		// particles[i].colorDraw = ColorGroupColors[particles[i].colorGroup];
 	}
 
-	// randomizeAttractionFactorMatrix();
-	attractionFactorMatrix[0][0] = 1.0;
-	attractionFactorMatrix[0][1] = -1.0;
-	attractionFactorMatrix[1][0] = 0.5;
-	attractionFactorMatrix[1][1] = 0.0;
+	randomizeAttractionFactorMatrix();
+	// attractionFactorMatrix[0][0] = 1.0;
+	// attractionFactorMatrix[0][1] = -1.0;
+	// attractionFactorMatrix[1][0] = 0.5;
+	// attractionFactorMatrix[1][1] = 0.0;
 }
 
 static void UpdateDrawFrame()
@@ -450,9 +506,11 @@ static void UpdateDrawFrame()
 		{
 			// Get list of the 8 neighboring cells and itself
 			Cell *neighborCells[9];
-			GetNeighborCells(neighborCells, r, c);
+			CellWrap neighborCellWraps[9];
+			InitCellWraps(neighborCellWraps, 9);
+			GetNeighborCells(neighborCells, r, c, neighborCellWraps);
 
-			// Go through every particle in this cell
+			// Go through every particle in this cell (as subjects)
 			for (int pI = 0; pI < grid[r][c].particleCount; pI++)
 			{
 				uint16_t i = grid[r][c].particleIndices[pI];
@@ -460,14 +518,35 @@ static void UpdateDrawFrame()
 				// Go through each neighboring cell
 				for (int n = 0; n < 9; n++)
 				{
-					// Go through every particle in this cell
+					// Go through every particle in this cell (as objects)
 					for (int pJ = 0; pJ < neighborCells[n]->particleCount; pJ++)
 					{
 						uint16_t j = neighborCells[n]->particleIndices[pJ];
 						if (&particles[j] == &particles[i])
 							continue;
+
+						Vector2 particleObjPercievedPos = particles[j].position;
+						// Offset location if it's wrapped
+						if (neighborCellWraps[n].wrappedLeft)
+						{
+							// TODO: let these not be constants. Should be aspect ratio (width of field in particle's float coord system)
+							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {-2.0, 0.0});
+						}
+						if (neighborCellWraps[n].wrappedRight)
+						{
+							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {2.0, 0.0});
+						}
+						if (neighborCellWraps[n].wrappedTop)
+						{
+							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {0.0, -1.0});
+						}
+						if (neighborCellWraps[n].wrappedBottom)
+						{
+							particleObjPercievedPos = Vector2Add(particleObjPercievedPos, {0.0, 1.0});
+						}
+
 						// Only deal with neighbors within sphere of influence
-						Vector2 delta = Vector2Subtract(particles[i].position, particles[j].position);
+						Vector2 delta = Vector2Subtract(particles[i].position, particleObjPercievedPos);
 						float distance = Vector2Length(delta);
 						if (distance > 0.0 && distance < maxDistance)
 						{
@@ -492,58 +571,17 @@ static void UpdateDrawFrame()
 				particles[i].position.y += particles[i].velocity.y * deltaTime;
 
 				// If the particle goes off the screen, wrap it around to the other side
-				if (particles[i].position.x < 0)
-					particles[i].position.x = 1.9;
+				if (particles[i].position.x < 0.01)
+					particles[i].position.x = 1.99;
 				if (particles[i].position.x > 2)
-					particles[i].position.x = 0.1;
-				if (particles[i].position.y < 0)
-					particles[i].position.y = 0.9;
+					particles[i].position.x = 0;
+				if (particles[i].position.y < 0.01)
+					particles[i].position.y = 0.99;
 				if (particles[i].position.y > 1)
-					particles[i].position.y = 0.1;
+					particles[i].position.y = 0.01;
 			}
 		}
 	}
-	// for (int i = 0; i < MAX_PARTICLES; i++)
-	// {
-	// 	Vector2 totalForce = {0.0, 0.0}; // Will be accumulated when looping through neighbors
-	// 	for (int j = 0; j < MAX_PARTICLES; j++)
-	// 	{
-	// 		if (j == i)
-	// 			continue;
-	// 		// Only deal with neighbors within sphere of influence
-	// 		Vector2 delta = Vector2Subtract(particles[i].position, particles[j].position);
-	// 		float distance = Vector2Length(delta);
-	// 		if (distance > 0.0 && distance < maxDistance)
-	// 		{
-	// 			// How hard do I need to move?
-	// 			float forceMag = AttractionForceMag(distance / maxDistance, attractionFactorMatrix[particles[i].colorGroup][particles[j].colorGroup]);
-
-	// 			// Where do I need to move?
-	// 			// Normalize then scale by force magnitude
-	// 			Vector2 force = Vector2Scale(delta, -1.0 / distance * forceMag);
-	// 			totalForce = Vector2Add(totalForce, force);
-	// 		}
-	// 	}
-
-	// 	totalForce = Vector2Scale(totalForce, maxDistance * forceFactor);
-
-	// 	particles[i].velocity = Vector2Scale(particles[i].velocity, frictionFactor);
-	// 	particles[i].velocity = Vector2Add(particles[i].velocity, Vector2Scale(totalForce, deltaTime));
-
-	// 	// Update the particle's position based on its velocity
-	// 	particles[i].position.x += particles[i].velocity.x * deltaTime;
-	// 	particles[i].position.y += particles[i].velocity.y * deltaTime;
-
-	// 	// If the particle goes off the screen, wrap it around to the other side
-	// 	if (particles[i].position.x < 0)
-	// 		particles[i].position.x = CANVAS_ASPECT_RATIO;
-	// 	if (particles[i].position.x > CANVAS_ASPECT_RATIO)
-	// 		particles[i].position.x = 0;
-	// 	if (particles[i].position.y < 0)
-	// 		particles[i].position.y = 1;
-	// 	if (particles[i].position.y > 1)
-	// 		particles[i].position.y = 0;
-	// }
 
 	// Draw each particle
 	for (int i = 0; i < MAX_PARTICLES; i++)
@@ -551,17 +589,18 @@ static void UpdateDrawFrame()
 		// Scale from world space to screen space
 		Vector2 posOnScreen = {particles[i].position.x * CANVAS_WIDTH / (CANVAS_ASPECT_RATIO), particles[i].position.y * CANVAS_HEIGHT};
 		DrawPoint(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
-		// FrameBufferSetPixV(posOnScreen, ColorGroupColors[particles[i].colorGroup]);
-		if (i == 0)
-		{
-			if (t % 8 == 0)
-			{
-				FrameBufferSetPixV(posOnScreen, {255, 255, 0});
-			}
-			else
-			{
-				FrameBufferSetPixV(posOnScreen, {0, 0, 255});
-			}
-		}
 	}
+
+	// if (t % 20 == 0)
+	// {
+	// 	for (int i = 0; i < CELL_GRID_HEIGHT; i++)
+	// 	{
+	// 		for (int j = 0; j < CELL_GRID_WIDTH; j++)
+	// 		{
+	// 			printf("%03d ", grid[i][j].particleCount);
+	// 		}
+	// 		printf("\n");
+	// 	}
+	// 	printf("\n");
+	// }
 }
