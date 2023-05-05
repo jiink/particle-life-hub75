@@ -1,8 +1,6 @@
-// TODO: Cell optimization https://youtu.be/9IULfQH7E90?t=231
-//	 TOOD: Have the particles consider the other particles from a wrapped neighboring cell as if they were beyond the edge of the area
+// TODO: Hue shifting over time
 // Resources:
 // 		https://youtu.be/scvuli-zcRc
-//		https://www.reddit.com/r/raylib/comments/hcglzh/c_reasonable_performance_pixelbypixel_display/g212jbl/
 
 #include <iostream>
 #include <raylib.h>
@@ -18,8 +16,8 @@
 #define CELL_GRID_HEIGHT 2
 #define MAX_PARTICLES_PER_CELL 100
 
-#define MAX_PARTICLES 200
-#define MAX_COLOR_GROUPS 3
+#define MAX_PARTICLES 100
+#define MAX_COLOR_GROUPS 2
 
 using namespace std;
 
@@ -477,11 +475,11 @@ static void Initialize()
 		// particles[i].colorDraw = ColorGroupColors[particles[i].colorGroup];
 	}
 
-	randomizeAttractionFactorMatrix();
-	// attractionFactorMatrix[0][0] = 1.0;
-	// attractionFactorMatrix[0][1] = -1.0;
-	// attractionFactorMatrix[1][0] = 0.5;
-	// attractionFactorMatrix[1][1] = 0.0;
+	//randomizeAttractionFactorMatrix();
+	attractionFactorMatrix[0][0] = 1.0;
+	attractionFactorMatrix[0][1] = -1.0;
+	attractionFactorMatrix[1][0] = 0.2;
+	attractionFactorMatrix[1][1] = 0.0;
 }
 
 static void UpdateDrawFrame()
